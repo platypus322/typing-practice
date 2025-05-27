@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { saveResult } from "../db/indexedDB";
 import ResultModal from "../components/ResultModal";
 import ResultLogModal from "../components/ResultLogModal";
@@ -6,12 +6,12 @@ import TypingArea from "../components/TypingArea";
 import SettingsPanel from "../components/SettingsPanel";
 import { loadSettings, saveSettings } from "../db/indexedDB";
 
-
-
 function TypingPage() {
     const userId = localStorage.getItem("userId");
+    const inputRef = useRef(null); // ✅ input DOM 참조용
 
     const [quote, setQuote] = useState("");
+    const [author, setAuthor] = useState("");
     const [loading, setLoading] = useState(true);
     const [input, setInput] = useState("");
     const [startTime, setStartTime] = useState(null);
@@ -23,13 +23,20 @@ function TypingPage() {
     const [showLogModal, setShowLogModal] = useState(false);
     const [fontSize, setFontSize] = useState(16);
     const [fontColor, setFontColor] = useState("black");
+    const [finalStats, setFinalStats] = useState(null);
+    const [isFocused, setIsFocused] = useState(false);
 
     const fetchQuote = async () => {
         setLoading(true);
         try {
-            const res = await fetch("/api/auote");
+            const res = await fetch("/api/quote");
+            const contentType = res.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                throw new Error("응답이 JSON이 아닙니다.");
+            }
             const data = await res.json();
-            setQuote(`${data.quote} — ${data.author}`);
+            setQuote(data.quote);
+            setAuthor(data.author);
             setInput("");
             setStartTime(null);
             setElapsedTime(0);
@@ -51,13 +58,17 @@ function TypingPage() {
         }
         applySettings();
     }, []);
-    
+
     useEffect(() => {
         saveSettings({ fontSize, fontColor });
     }, [fontSize, fontColor]);
-    
+
     useEffect(() => {
         fetchQuote();
+
+        setTimeout(() => {
+            inputRef.current?.focus();
+        }, 100);
     }, []);
 
     useEffect(() => {
@@ -81,15 +92,9 @@ function TypingPage() {
         const interval = setInterval(() => {
             const minutes = elapsedTime / 60000;
             if (minutes === 0) return;
-
-            const correctChars = input
-                .split("")
-                .filter((char, i) => char === quote[i])
-                .length;
-
+            const correctChars = input.split("").filter((char, i) => char === quote[i]).length;
             const totalChars = input.length;
             const totalWords = input.trim().split(/\s+/).length;
-
             setAccuracy(Math.round((correctChars / totalChars) * 100));
             setCpm(Math.round(totalChars / minutes));
             setWpm(Math.round(totalWords / minutes));
@@ -101,51 +106,38 @@ function TypingPage() {
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === "Enter") {
-                if (input === quote) {
+                if (showModal) {
+                    handleCloseResultModal();
+                } else if (input === quote) {
+                    setFinalStats({ accuracy, cpm, wpm, elapsedTime });
                     setShowModal(true);
-                } else if (showModal) {
-                    setShowModal(false);
-                    fetchQuote();
                 }
             }
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [input, quote, showModal]);
+    }, [input, quote, showModal, accuracy, cpm, wpm, elapsedTime]);
 
     const handleChange = (e) => {
         const value = e.target.value;
-
-        if (!startTime && value.length > 0) {
-            setStartTime(Date.now());
-        }
-
+        if (!startTime && value.length > 0) setStartTime(Date.now());
         if (value.length === 0) {
             setStartTime(null);
             setElapsedTime(0);
         }
-
         setInput(value);
-
-        if (value === quote) {
-            setTimeout(() => {
-                fetchQuote();
-            }, 500);
-        }
     };
 
     const handleCloseResultModal = () => {
-        saveResult({
-            quote,
-            input,
-            accuracy,
-            cpm,
-            wpm,
-            elapsedTime,
-            timestamp: Date.now()
-        });
+        saveResult({ quote, input, ...finalStats, timestamp: Date.now() });
         setShowModal(false);
+        setFinalStats(null);
         fetchQuote();
+
+        // ✅ 입력 필드에 포커스 재설정
+        setTimeout(() => {
+            inputRef.current?.focus();
+        }, 100);
     };
 
     const getColor = (char, i) => {
@@ -153,6 +145,12 @@ function TypingPage() {
             return input[i] === char ? "black" : "red";
         }
         return "gray";
+    };
+
+    const focusInput = () => {
+        if (inputRef.current) {
+            inputRef.current.focus();
+        }
     };
 
     return (
@@ -163,27 +161,33 @@ function TypingPage() {
             {loading ? (
                 <p>명언을 불러오는 중...</p>
             ) : (
-                <TypingArea
-                    quote={quote}
-                    input={input}
-                    getColor={getColor}
-                    fontSize={fontSize}
-                    fontColor={fontColor}
-                />
-
+                <div onClick={focusInput} style={{ cursor: "pointer" }}>
+                    <TypingArea
+                        quote={quote}
+                        input={input}
+                        getColor={getColor}
+                        fontSize={fontSize}
+                        fontColor={fontColor}
+                        isFocused={isFocused}
+                    />
+                    <p style={{ fontSize: "0.9rem", color: "#888", marginTop: "-1rem" }}>— {author}</p>
+                </div>
             )}
 
+            {/* 숨겨진 실제 입력 필드 */}
             <input
+                ref={inputRef}
                 type="text"
                 value={input}
                 onChange={handleChange}
+                onFocus={() => setIsFocused(true)}      // ✅ 포커스 감지
+                onBlur={() => setIsFocused(false)}      // ✅ 포커스 해제 감지
                 placeholder="여기에 타이핑하세요"
                 disabled={loading}
                 style={{
-                    width: "100%",
-                    fontSize: "1.2rem",
-                    padding: "0.5rem",
-                    border: "1px solid #ccc"
+                    position: "absolute",
+                    left: "-9999px",
+                    opacity: 0
                 }}
             />
 
@@ -194,6 +198,7 @@ function TypingPage() {
             <button onClick={() => setShowLogModal(true)} style={{ marginTop: "1rem" }}>
                 📜 결과 기록 보기
             </button>
+
             <SettingsPanel
                 fontSize={fontSize}
                 setFontSize={setFontSize}
@@ -201,20 +206,18 @@ function TypingPage() {
                 setFontColor={setFontColor}
             />
 
-            {showModal && (
+            {showModal && finalStats && (
                 <ResultModal
-                    accuracy={accuracy}
-                    cpm={cpm}
-                    wpm={wpm}
-                    elapsedTime={elapsedTime}
+                    accuracy={finalStats.accuracy}
+                    cpm={finalStats.cpm}
+                    wpm={finalStats.wpm}
+                    elapsedTime={finalStats.elapsedTime}
                     onClose={handleCloseResultModal}
                 />
             )}
 
             {showLogModal && (
-                <ResultLogModal
-                    onClose={() => setShowLogModal(false)}
-                />
+                <ResultLogModal onClose={() => setShowLogModal(false)} />
             )}
         </div>
     );
