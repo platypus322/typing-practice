@@ -27,9 +27,9 @@ function TypingPage() {
     const fetchQuote = async () => {
         setLoading(true);
         try {
-            const res = await fetch("https://zenquotes.io/api/random");
+            const res = await fetch("/api/auote");
             const data = await res.json();
-            setQuote(data[0].q);
+            setQuote(`${data.quote} — ${data.author}`);
             setInput("");
             setStartTime(null);
             setElapsedTime(0);
